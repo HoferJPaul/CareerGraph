@@ -6,6 +6,9 @@ A personal professional-evidence graph in Neo4j Aura, matched against job descri
 turned into a clean, provenance-preserving evidence package — with every claim traceable back
 to real graph evidence.
 
+> **Status:** early-stage / work in progress. This is not a finished product — expect rough
+> edges, manual steps (see "What's manual right now" below), and breaking changes.
+
 ## Layout
 
 ```
