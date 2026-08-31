@@ -9,6 +9,10 @@ to real graph evidence.
 > **Status:** early-stage / work in progress. This is not a finished product — expect rough
 > edges, manual steps (see "What's manual right now" below), and breaking changes.
 
+<p align="center">
+  <img src="docs/pipeline.png" alt="CareerGraph pipeline" width="100%">
+</p>
+
 ## Layout
 
 ```
