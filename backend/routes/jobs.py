@@ -12,6 +12,10 @@ The response carries the CVContext for the Match Review screen and the analysisI
 uses. Nothing is written to disk: there is no shared requirements file that concurrent analyses
 could overwrite (the old output/requirements.json is gone).
 
+If a Source CV is stored, its profile is SNAPSHOTTED (an immutable deep copy) onto the analysis and
+reconciled with the graph evidence right here -- deterministic, no model. The browser never supplies
+either; later edits to the stored profile do not reach an existing analysis.
+
 LLM_PROVIDER=dev selects the explicit development fallbacks (cached/heuristic extraction); the
 response labels them (`extraction.devFallback`) so they are never presented as equivalent to a
 real extraction. A failed Groq call is an error -- it never silently degrades to those.
@@ -29,6 +33,10 @@ from llm.factory import LLMServices, get_llm_services
 from llm_provider import ExtractionResult
 from pipeline import build_cv_context
 from requirement_schema import RequirementList
+from source_cv.analysis import snapshot_and_reconcile
+from source_cv.service import SourceCvService
+from source_cv.wiring import get_source_cv_service
+from source_views import source_cv_info
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 log = logging.getLogger("careergraph.api")
@@ -76,6 +84,7 @@ def analyze_job(
     session=Depends(get_session),
     services: LLMServices = Depends(get_llm_services),
     store: AnalysisStore = Depends(get_analysis_store),
+    source_service: SourceCvService = Depends(get_source_cv_service),
 ) -> AnalyzeResponse:
     jd = payload.jobDescription.strip()
     if not jd:
@@ -98,18 +107,21 @@ def analyze_job(
         )
 
     cv_context = build_cv_context(extraction.requirements, session, ROOT)
-    record = store.put(cv_context)
+    snapshot, reconciliation, unavailable = snapshot_and_reconcile(source_service, cv_context)
+    record = store.put(cv_context, snapshot, reconciliation)
 
     # Counts and ids only -- never job-description text or career evidence.
     log.info(
-        "analysis_complete analysis_id=%s provider=%s mode=%s requirements=%d matched=%d gaps=%d",
+        "analysis_complete analysis_id=%s provider=%s mode=%s requirements=%d matched=%d gaps=%d source_cv=%s",
         record.analysis_id, extraction.provider, extraction.mode,
         len(extraction.requirements.requirements),
         len(cv_context.matchedRequirements), len(cv_context.gaps),
+        f"revision_{snapshot.revision}" if snapshot else "none",
     )
     return AnalyzeResponse(
         analysisId=record.analysis_id,
         extraction=extraction_info(extraction),
         requirementCount=len(extraction.requirements.requirements),
         cvContext=cv_context,
+        sourceCv=source_cv_info(snapshot, reconciliation, unavailable_reason=unavailable),
     )

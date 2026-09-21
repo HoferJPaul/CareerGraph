@@ -35,6 +35,9 @@ class CVExperience(BaseModel):
     startDate: Optional[str] = None
     endDate: Optional[str] = None
     bullets: list[CVBullet] = []
+    # Source-CV-aware generation only (both default to "absent", so graph-only CVs are unchanged):
+    entryId: Optional[str] = None  # hidden id of the reconciled role, used to prove every role appears once
+    dateRange: Optional[str] = None  # preformatted period; when set the renderer uses it as written
 
 
 class CVProject(BaseModel):
@@ -44,6 +47,8 @@ class CVProject(BaseModel):
     startDate: Optional[str] = None
     endDate: Optional[str] = None
     bullets: list[CVBullet] = []
+    entryId: Optional[str] = None
+    dateRange: Optional[str] = None
 
 
 class CVEducationEntry(BaseModel):
@@ -52,6 +57,8 @@ class CVEducationEntry(BaseModel):
     startDate: Optional[str] = None
     endDate: Optional[str] = None
     bullets: list[CVBullet] = []
+    entryId: Optional[str] = None
+    dateRange: Optional[str] = None
 
 
 class CVSkills(BaseModel):
@@ -60,6 +67,32 @@ class CVSkills(BaseModel):
     databases: list[str] = []
     tools: list[str] = []
     capabilities: list[str] = []
+
+
+class CVLink(BaseModel):
+    label: str
+    url: str
+
+
+class CVContact(BaseModel):
+    """Deterministic header details copied from the validated Source CV profile -- never model text."""
+
+    email: Optional[str] = None
+    telephone: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    links: list[CVLink] = []
+
+
+class CVCertification(BaseModel):
+    name: str
+    issuer: Optional[str] = None
+    date: Optional[str] = None
+
+
+class CVOtherSection(BaseModel):
+    heading: str
+    items: list[str]
 
 
 class StructuredCV(BaseModel):
@@ -71,3 +104,9 @@ class StructuredCV(BaseModel):
     education: list[CVEducationEntry] = []
     skills: CVSkills = CVSkills()
     languages: list[str] = []
+    # Source-CV-aware generation only; all default to "absent" so graph-only CVs are unchanged.
+    contact: Optional[CVContact] = None
+    additionalExperience: list[CVExperience] = []  # compact entries: less relevant roles, kept for a complete timeline
+    certifications: list[CVCertification] = []
+    otherSections: list[CVOtherSection] = []
+    profileEvidenceIds: list[str] = []  # hidden provenance for the profile paragraph

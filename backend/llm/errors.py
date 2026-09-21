@@ -15,6 +15,9 @@ class Violation:
 
     code: str
     detail: str = ""
+    # Source-aware generation only: what the repair loop may rewrite or remove ("headline", "profile",
+    # "bullet:<entry>#<n>", "skill:<bucket>:<name>"; "structure" for problems fixed without a model).
+    target: str = ""
 
 
 class LLMError(Exception):
@@ -133,9 +136,10 @@ class ProvenanceValidationError(LLMError):
         "Try generating again."
     )
 
-    def __init__(self, violations: list[Violation]):
+    def __init__(self, violations: list[Violation], repair_attempts: int = 0):
         super().__init__()
         self.violations = violations
+        self.repair_attempts = repair_attempts
 
     def to_detail(self) -> dict:
         detail = super().to_detail()
@@ -143,4 +147,6 @@ class ProvenanceValidationError(LLMError):
         for v in self.violations:
             counts[v.code] = counts.get(v.code, 0) + 1
         detail["violations"] = counts  # codes and counts only -- never terms or evidence text
+        if self.repair_attempts:
+            detail["repairAttempts"] = self.repair_attempts
         return detail

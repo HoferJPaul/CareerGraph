@@ -19,6 +19,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from source_cv.reconcile import Reconciliation
+from source_cv.schema import SourceProfile
 from tailor_cv import CVContext
 
 TTL_SECONDS = 60 * 60
@@ -30,6 +32,11 @@ class AnalysisRecord:
     analysis_id: str
     cv_context: CVContext
     created_at: float
+    # The Source CV as it was WHEN THIS ANALYSIS RAN (an immutable deep copy), and its reconciliation with
+    # the graph evidence. Later edits, replacement or deletion of the stored profile never reach them, and
+    # the browser never supplies either.
+    source_profile: Optional[SourceProfile] = None
+    reconciliation: Optional[Reconciliation] = None
 
 
 class AnalysisStore:
@@ -45,9 +52,18 @@ class AnalysisStore:
         self._records: "OrderedDict[str, AnalysisRecord]" = OrderedDict()
         self._lock = threading.Lock()
 
-    def put(self, cv_context: CVContext) -> AnalysisRecord:
+    def put(
+        self,
+        cv_context: CVContext,
+        source_profile: Optional[SourceProfile] = None,
+        reconciliation: Optional[Reconciliation] = None,
+    ) -> AnalysisRecord:
         record = AnalysisRecord(
-            analysis_id=secrets.token_urlsafe(16), cv_context=cv_context, created_at=self._clock()
+            analysis_id=secrets.token_urlsafe(16),
+            cv_context=cv_context,
+            created_at=self._clock(),
+            source_profile=source_profile,
+            reconciliation=reconciliation,
         )
         with self._lock:
             self._evict_expired()

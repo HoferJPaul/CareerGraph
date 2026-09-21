@@ -19,6 +19,9 @@ from api_schemas import RequirementsAnalyzeResponse
 from deps import get_session
 from pipeline import build_cv_context
 from requirement_schema import RequirementList
+from source_cv.analysis import snapshot_and_reconcile
+from source_cv.service import SourceCvService
+from source_cv.wiring import get_source_cv_service
 
 router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 
@@ -30,9 +33,11 @@ def analyze_requirements(
     payload: RequirementList,
     session=Depends(get_session),
     store: AnalysisStore = Depends(get_analysis_store),
+    source_service: SourceCvService = Depends(get_source_cv_service),
 ) -> RequirementsAnalyzeResponse:
     cv_context = build_cv_context(payload, session, ROOT)
-    record = store.put(cv_context)
+    snapshot, reconciliation, _ = snapshot_and_reconcile(source_service, cv_context)
+    record = store.put(cv_context, snapshot, reconciliation)
     return RequirementsAnalyzeResponse(
         analysisId=record.analysis_id,
         requirementCount=len(payload.requirements),
