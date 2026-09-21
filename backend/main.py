@@ -17,7 +17,9 @@ from fastapi.responses import JSONResponse
 from deps import shutdown_driver
 from llm.errors import LLMError
 from llm.factory import log_startup_status
-from routes import cv, graph, jobs, llm_status, requirements
+from routes import cv, graph, jobs, llm_status, requirements, source_cv
+from source_cv.errors import SourceCvError
+from upload_limits import BodySizeLimitMiddleware
 
 # Structured, content-free logs for the LLM/API layers (see llm/*.py: they log operation, model,
 # attempts, latency and token counts -- never prompts, job descriptions, CVs or provider errors).
@@ -39,6 +41,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CareerGraph API", version="0.1.0", lifespan=lifespan)
 
+# Added BEFORE CORS so the CORS layer wraps it (a refused upload must still carry CORS headers).
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -58,11 +62,19 @@ async def llm_error_handler(request: Request, exc: LLMError) -> JSONResponse:
     return JSONResponse(status_code=exc.http_status, content={"detail": exc.to_detail()}, headers=exc.headers)
 
 
+@app.exception_handler(SourceCvError)
+async def source_cv_error_handler(request: Request, exc: SourceCvError) -> JSONResponse:
+    """Source CV failures use the same non-sensitive {"detail": {"code", "message", "retryable"}} shape.
+    Messages are fixed strings: never CV text, contact details, filenames or storage paths."""
+    return JSONResponse(status_code=exc.http_status, content={"detail": exc.to_detail()}, headers=exc.headers)
+
+
 app.include_router(graph.router)
 app.include_router(jobs.router)
 app.include_router(requirements.router)
 app.include_router(cv.router)
 app.include_router(llm_status.router)
+app.include_router(source_cv.router)
 
 
 @app.get("/api/health")

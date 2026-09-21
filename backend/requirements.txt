@@ -2,3 +2,5 @@
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 groq==1.7.0
+python-multipart==0.0.32
+pypdf==6.19.0

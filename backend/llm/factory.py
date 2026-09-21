@@ -17,6 +17,7 @@ from llm.config import ROOT_DIR, LLMSettings, load_settings
 from llm.groq_client import GroqStructuredClient
 from llm.groq_cv_writer import GroqCVWriter
 from llm.groq_extraction import CapabilityVerifier, GroqLLMProvider, graph_capability_verifier
+from llm.source_profile import DevSourceCvParser, GroqSourceCvParser, SourceCvParser
 from llm.writer_base import DeterministicWriterAdapter, ReportingCVWriter
 from llm_provider import DevLLMProvider, LLMProvider
 
@@ -28,6 +29,8 @@ class LLMServices:
     settings: LLMSettings
     extraction_provider: LLMProvider
     cv_writer: ReportingCVWriter
+    # Source CV parsing. Optional so services built by hand (tests, tools) need not supply one.
+    source_parser: Optional[SourceCvParser] = None
 
 
 def build_services(
@@ -42,6 +45,7 @@ def build_services(
             settings=settings,
             extraction_provider=DevLLMProvider(root or ROOT_DIR),
             cv_writer=DeterministicWriterAdapter(),
+            source_parser=DevSourceCvParser(),
         )
 
     if sdk_client is None:
@@ -51,6 +55,7 @@ def build_services(
         settings=settings,
         extraction_provider=GroqLLMProvider(settings, client, capability_verifier=capability_verifier),
         cv_writer=GroqCVWriter(settings, client),
+        source_parser=GroqSourceCvParser(settings, client),
     )
 
 

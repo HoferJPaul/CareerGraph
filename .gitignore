@@ -18,6 +18,12 @@ frontend/dist/
 # Generated pipeline output (regenerated on each run)
 output/
 
+# Private source-CV storage: the uploaded original and its parsed profile (personal data).
+# Never commit anything under here. Override the location with CAREERGRAPH_PRIVATE_DIR.
+data/private/
+**/source_cv/upload-*
+**/source_cv/profile.json
+
 # Personal career data (not for public distribution -- see data/README.md)
 data/career_seed.json
 data/jobs.txt

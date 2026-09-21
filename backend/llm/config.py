@@ -20,6 +20,7 @@ DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_MAX_JOB_DESCRIPTION_CHARS = 20_000
 DEFAULT_MAX_CV_CONTEXT_CHARS = 60_000
+DEFAULT_MAX_SOURCE_CV_CHARS = 40_000
 
 Provider = Literal["groq", "dev"]
 
@@ -36,6 +37,7 @@ class LLMSettings(BaseModel):
     strict_schema: bool = True
     max_job_description_chars: int = DEFAULT_MAX_JOB_DESCRIPTION_CHARS
     max_cv_context_chars: int = DEFAULT_MAX_CV_CONTEXT_CHARS
+    max_source_cv_chars: int = DEFAULT_MAX_SOURCE_CV_CHARS
 
     @property
     def dev_fallback(self) -> bool:
@@ -135,4 +137,18 @@ def load_settings(
         kwargs["max_cv_context_chars"] = int(
             _number(get("LLM_MAX_CV_CONTEXT_CHARS"), "LLM_MAX_CV_CONTEXT_CHARS", int, 1000)
         )
+    if get("LLM_MAX_SOURCE_CV_CHARS"):
+        kwargs["max_source_cv_chars"] = int(
+            _number(get("LLM_MAX_SOURCE_CV_CHARS"), "LLM_MAX_SOURCE_CV_CHARS", int, 1000)
+        )
     return LLMSettings(**kwargs)
+
+
+def env_value(
+    name: str, environ: Optional[Mapping[str, str]] = None, env_file: Optional[Path] = None
+) -> Optional[str]:
+    """One setting, read the same way load_settings() reads them (process environment first, then the
+    repo-root .env). Blank counts as unset."""
+    merged: dict[str, str] = dict(_read_env_file(env_file if env_file is not None else ROOT_DIR / ".env"))
+    merged.update(environ if environ is not None else os.environ)
+    return merged.get(name, "").strip() or None
