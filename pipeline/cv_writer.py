@@ -17,18 +17,20 @@ reads CVContext.gaps / partialRequirements / matchedRequirements at all -- gap
 analysis and match-confidence language belong in Match Review, not in the CV,
 so this stage is structurally incapable of leaking them into a StructuredCV.
 
-Two modes, mirroring llm_provider.LLMProvider's ABC/two-implementation shape:
-  - DeterministicCVWriter: rule-based, no LLM call. Used live by the web app
-    (backend/routes/cv.py). Selects, suppresses, merges and buckets evidence,
-    but does NOT rewrite prose -- bullets reuse existing achievement/description
-    text as-is. Producing tighter, more polished bullets from raw evidence is
-    exactly the kind of judgment call a real LLM does better; seev write_cv.py
-    for the Claude-assisted alternative available today.
+Implementations of the CVWriter interface:
+  - DeterministicCVWriter: rule-based, no LLM call. Selects, suppresses, merges
+    and buckets evidence, but does NOT rewrite prose -- bullets reuse existing
+    achievement/description text as-is. It is the explicit development fallback
+    (LLM_PROVIDER=dev) and the regression oracle for the LLM-backed writer: its
+    output must satisfy the same provenance rules.
   - ManualStructuredCVWriter: loads a hand-authored (or Claude Code-authored)
     structured_cv.json and validates it against the StructuredCV schema before
-    use -- the "Claude-assisted" path from write_cv.py. A future real LLM
-    provider can implement this same CVWriter interface without any other
-    pipeline code changing.
+    use -- the manual path from write_cv.py.
+  - backend/llm/groq_cv_writer.GroqCVWriter: the production writer. It lives in
+    backend/ because pipeline/ makes no LLM API calls. It rewrites evidence into
+    recruiter-facing bullets, but only ever cites evidence that exists in the
+    CVContext, and reuses the header/placement helpers below so titles,
+    employers and dates always come from the graph.
 """
 import json
 from abc import ABC, abstractmethod
@@ -46,6 +48,7 @@ from structured_cv import (
 from tailor_cv import CVContext, EvidenceStory, SkillSummary
 
 DEFAULT_HEADLINE = "Software Engineer"
+DEFAULT_CV_NAME = "Paul Hofer"
 MAX_BULLETS_PER_ENTRY = 4
 
 # Deterministic skill classification: CareerGraph's own Skill.category (technical/
@@ -153,20 +156,56 @@ def _education_home(story: EvidenceStory, education_institutions: set[str]) -> O
     return None
 
 
-def _build_experience(story: EvidenceStory) -> CVExperience:
-    bullets = _achievement_bullets(story)
-    if not bullets:
-        fallback = _fallback_bullet(story, {})
-        if fallback:
-            bullets = [fallback]
+def story_placement(story: EvidenceStory, education_institutions: set[str]) -> tuple[str, Optional[str]]:
+    """Which CV section a story belongs in, by the same structural rules
+    DeterministicCVWriter applies: ("education", <institution>) if it folds into an
+    Education entry, else ("experience", None) for professional-context evidence, else
+    ("project", None). Public so an LLM-backed writer can be held to the identical
+    placement rules instead of re-deciding them."""
+    home = _education_home(story, education_institutions)
+    if home:
+        return "education", home
+    return ("experience" if story.professionalContext else "project"), None
+
+
+def experience_header(story: EvidenceStory) -> CVExperience:
+    """The factual, graph-derived fields of an Experience entry (no bullets). Titles,
+    employers, places and dates always come from here -- never from model output."""
     return CVExperience(
         title=story.roleTitle or story.label,
         organization=story.company,
         location=story.location or story.workMode,
         startDate=_format_date(story.startDate),
         endDate=_format_date(story.endDate),
-        bullets=bullets,
     )
+
+
+def project_header(story: EvidenceStory) -> CVProject:
+    return CVProject(
+        name=story.label,
+        role=story.personRole,
+        context=story.context,
+        startDate=_format_date(story.startDate),
+        endDate=_format_date(story.endDate),
+    )
+
+
+def education_header(anchor: EvidenceStory, institution: str) -> CVEducationEntry:
+    return CVEducationEntry(
+        institution=institution,
+        program=anchor.program,
+        startDate=_format_date(anchor.startDate),
+        endDate=_format_date(anchor.endDate),
+    )
+
+
+def _build_experience(story: EvidenceStory) -> CVExperience:
+    bullets = _achievement_bullets(story)
+    if not bullets:
+        fallback = _fallback_bullet(story, {})
+        if fallback:
+            bullets = [fallback]
+    return experience_header(story).model_copy(update={"bullets": bullets})
 
 
 def _build_project(story: EvidenceStory, skill_display: dict[str, str]) -> CVProject:
@@ -175,14 +214,7 @@ def _build_project(story: EvidenceStory, skill_display: dict[str, str]) -> CVPro
         fallback = _fallback_bullet(story, skill_display)
         if fallback:
             bullets = [fallback]
-    return CVProject(
-        name=story.label,
-        role=story.personRole,
-        context=story.context,
-        startDate=_format_date(story.startDate),
-        endDate=_format_date(story.endDate),
-        bullets=bullets,
-    )
+    return project_header(story).model_copy(update={"bullets": bullets})
 
 
 def _build_education_entry(
@@ -200,12 +232,8 @@ def _build_education_entry(
         )
         bullets.extend(extra)
 
-    return CVEducationEntry(
-        institution=institution,
-        program=anchor.program,
-        startDate=_format_date(anchor.startDate),
-        endDate=_format_date(anchor.endDate),
-        bullets=bullets[:MAX_BULLETS_PER_ENTRY],
+    return education_header(anchor, institution).model_copy(
+        update={"bullets": bullets[:MAX_BULLETS_PER_ENTRY]}
     )
 
 
@@ -257,13 +285,13 @@ def _build_profile(
 
 class CVWriter(ABC):
     @abstractmethod
-    def write(self, cv_context: CVContext, name: str = "Paul Hofer") -> StructuredCV:
+    def write(self, cv_context: CVContext, name: str = DEFAULT_CV_NAME) -> StructuredCV:
         """Turn a CVContext into a StructuredCV. Must never invent evidence and
         must never read cv_context.gaps/partialRequirements/matchedRequirements."""
 
 
 class DeterministicCVWriter(CVWriter):
-    def write(self, cv_context: CVContext, name: str = "Paul Hofer") -> StructuredCV:
+    def write(self, cv_context: CVContext, name: str = DEFAULT_CV_NAME) -> StructuredCV:
         skills_by_name = {s.name: s for s in cv_context.skills}
         language_names = {n for n, s in skills_by_name.items() if s.category == "language"}
         languages = sorted(skills_by_name[n].displayName for n in language_names)
@@ -327,6 +355,6 @@ class ManualStructuredCVWriter(CVWriter):
     def __init__(self, structured_cv_path: Path):
         self.structured_cv_path = structured_cv_path
 
-    def write(self, cv_context: CVContext, name: str = "Paul Hofer") -> StructuredCV:
+    def write(self, cv_context: CVContext, name: str = DEFAULT_CV_NAME) -> StructuredCV:
         data = json.loads(self.structured_cv_path.read_text(encoding="utf-8"))
         return StructuredCV.model_validate(data)
