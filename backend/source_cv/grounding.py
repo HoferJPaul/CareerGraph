@@ -46,6 +46,7 @@ from source_cv.schema import (
     OtherSection,
     ParseWarning,
     ParserInfo,
+    ProfessionalSummary,
     ProjectEntry,
     SourceFact,
     SourceProfile,
@@ -249,7 +250,7 @@ def build_profile(
     summary = None
     s_text, s_excerpt = clean_text(draft.summary.text, MAX_FACT_CHARS), clean_text(draft.summary.excerpt, MAX_EXCERPT_CHARS)
     if s_text and s_excerpt and b.grounded(s_excerpt) and b.supported_by_excerpt(s_text, s_excerpt):
-        summary = SourceFact(id=b.allocator.allocate("sum", s_text), text=s_text, excerpt=s_excerpt)
+        summary = ProfessionalSummary(id=b.allocator.allocate("sum", s_text), text=s_text, excerpt=s_excerpt)
     elif s_text:
         b.warn("statement_unverified", "The profile summary the model returned was not found in the document and was left out.")
 

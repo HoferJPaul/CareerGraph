@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import type { AnalyzeResponse, CVContext, CvGenerateResponse } from "../types/career";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { api } from "../api/client";
+import type { AnalyzeResponse, CVContext, CvGenerateResponse, SourceCvStatus } from "../types/career";
 
 interface AnalysisContextValue {
   jobDescription: string;
@@ -17,6 +18,17 @@ interface AnalysisContextValue {
   setCv: (value: CvGenerateResponse | null) => void;
   template: string;
   setTemplate: (value: string) => void;
+  // A length TARGET for a complete CV: exceeding it shows a warning, it never removes chronology.
+  pageBudget: number;
+  setPageBudget: (value: number) => void;
+
+  // The stored Source CV's status (null while unknown). An analysis holds a server-side SNAPSHOT of the
+  // profile it ran against, so pages compare `analysis.sourceCv.revision` with this to say when the
+  // stored CV has changed since.
+  sourceCvStatus: SourceCvStatus | null;
+  sourceCvStatusFailed: boolean;
+  setSourceCvStatus: (value: SourceCvStatus | null) => void;
+  refreshSourceCvStatus: () => Promise<void>;
 }
 
 const AnalysisContext = createContext<AnalysisContextValue | null>(null);
@@ -26,11 +38,33 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
   const [analysis, setAnalysisState] = useState<AnalyzeResponse | null>(null);
   const [cv, setCv] = useState<CvGenerateResponse | null>(null);
   const [template, setTemplate] = useState("modern");
+  const [pageBudget, setPageBudget] = useState(2);
+  const [sourceCvStatus, setSourceCvStatus] = useState<SourceCvStatus | null>(null);
+  const [sourceCvStatusFailed, setSourceCvStatusFailed] = useState(false);
 
   function setAnalysis(value: AnalyzeResponse | null) {
     setAnalysisState(value);
     setCv(null);
   }
+
+  const refreshSourceCvStatus = useCallback(async () => {
+    try {
+      setSourceCvStatus(await api.getSourceCvStatus());
+      setSourceCvStatusFailed(false);
+    } catch {
+      setSourceCvStatusFailed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    api
+      .getSourceCvStatus()
+      .then((status) => {
+        setSourceCvStatus(status);
+        setSourceCvStatusFailed(false);
+      })
+      .catch(() => setSourceCvStatusFailed(true));
+  }, []);
 
   return (
     <AnalysisContext.Provider
@@ -44,6 +78,12 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
         setCv,
         template,
         setTemplate,
+        pageBudget,
+        setPageBudget,
+        sourceCvStatus,
+        sourceCvStatusFailed,
+        setSourceCvStatus,
+        refreshSourceCvStatus,
       }}
     >
       {children}

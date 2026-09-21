@@ -737,3 +737,37 @@ def test_other_endpoints_are_not_subject_to_the_source_cv_body_limit(tmp_path) -
         response = TestClient(app).get("/api/health")
     assert response.status_code == 200
     assert copy.deepcopy(response.json()) == {"status": "ok"}
+
+
+# ---- no key configured: only parsing needs the model ------------------------------------------------------------------------------------
+
+
+def test_reviewing_editing_and_deleting_work_without_a_configured_key_and_only_parsing_reports_it(tmp_path) -> None:
+    import os
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from llm import factory
+    from main import app
+    from source_cv import wiring
+
+    seeded = make_service(tmp_path)  # a CV stored earlier, while a key was available
+    seeded.run(seeded.ingest_events(seeded.prepare("cv.pdf", cv_pdf())))
+
+    env = {"LLM_PROVIDER": "groq", "GROQ_API_KEY": "", "CAREERGRAPH_PRIVATE_DIR": str(tmp_path)}
+    with patch.dict(os.environ, env):
+        factory._default_services.cache_clear()
+        wiring._default_service.cache_clear()
+        try:
+            client = TestClient(app)
+            assert client.get("/api/source-cv/status").json()["exists"] is True
+            profile = client.get("/api/source-cv").json()["profile"]
+            assert client.put("/api/source-cv", json={"expectedRevision": profile["revision"], "contact": profile["contact"]}).status_code == 200
+            blocked = upload(client, cv_docx())
+            assert blocked.status_code == 503 and blocked.json()["detail"]["code"] == "llm_not_configured"
+            assert client.get("/api/source-cv").json()["profile"]["revision"] == 2  # the failed upload changed nothing
+            assert client.delete("/api/source-cv").json() == {"deleted": True}
+        finally:
+            factory._default_services.cache_clear()
+            wiring._default_service.cache_clear()

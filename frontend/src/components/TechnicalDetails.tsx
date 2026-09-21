@@ -1,4 +1,4 @@
-import type { ExtractionInfo, GenerationInfo, TokenUsage } from "../types/career";
+import type { ExtractionInfo, GenerationInfo, SourceProfileView, TokenUsage } from "../types/career";
 
 function usageText(usage: TokenUsage | null): string {
   if (!usage) return "not reported";
@@ -50,8 +50,41 @@ export function GenerationDetails({ info }: { info: GenerationInfo }) {
         ["Model", info.model ?? "none (no LLM used)"],
         ["Writer", info.mode === "llm_structured" ? "LLM structured output" : "Development fallback: rule-based"],
         ["Provenance check", info.provenanceValidated ? "passed" : "not run"],
+        ...(info.completeCv
+          ? ([
+              ["Built from", "your source CV and the career graph"],
+              ["Claim verification", VERIFICATION_LABEL[info.verification ?? "not_needed"]],
+              ["Automatic repairs", info.repairAttempts === 0 ? "none needed" : `${info.repairAttempts} of at most 2`],
+              ["Model requests", String(info.attempts)],
+            ] as [string, string][])
+          : []),
         ["Tokens", usageText(info.tokenUsage)],
         ["Retried", info.retried ? `yes (${info.attempts} attempts)` : "no"],
+      ]}
+    />
+  );
+}
+
+const VERIFICATION_LABEL: Record<string, string> = {
+  semantic: "source-backed claims checked by a second model pass",
+  verbatim: "development fallback: claims must restate their evidence",
+  not_needed: "no source-backed claims to check",
+};
+
+const PARSER_MODE_LABEL: Record<string, string> = {
+  llm_structured: "LLM structured output",
+  heuristic_dev: "Development fallback: rule-based parser",
+};
+
+export function SourceParseDetails({ profile }: { profile: SourceProfileView }) {
+  return (
+    <Details
+      rows={[
+        ["Parser", profile.parser.provider],
+        ["Model", profile.parser.model ?? "none (no LLM used)"],
+        ["Parse mode", PARSER_MODE_LABEL[profile.parser.mode] ?? profile.parser.mode],
+        ["Parse requests", String(profile.parser.attempts)],
+        ["Version", String(profile.revision)],
       ]}
     />
   );

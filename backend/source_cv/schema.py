@@ -148,6 +148,10 @@ class SourceFact(_Strict):
     userEdited: bool = False
 
 
+class ProfessionalSummary(SourceFact):
+    """The candidate's own profile paragraph. Citable like any fact (`source:<id>`)."""
+
+
 class _Dated(_Strict):
     startText: Optional[str] = None
     endText: Optional[str] = None
@@ -266,7 +270,7 @@ class SourceProfile(_Strict):
     updatedAt: datetime
 
     contact: ContactInfo = Field(default_factory=ContactInfo)
-    summary: Optional[SourceFact] = None
+    summary: Optional[ProfessionalSummary] = None
     employment: list[EmploymentEntry] = Field(default_factory=list)
     education: list[EducationEntry] = Field(default_factory=list)
     projects: list[ProjectEntry] = Field(default_factory=list)
@@ -652,7 +656,7 @@ def apply_edit(current: SourceProfile, edit: ProfileEdit, when: datetime) -> Sou
         if text is None:
             raise _invalid("the summary is too long or unreadable")
         prior = current.summary
-        summary = SourceFact(
+        summary = ProfessionalSummary(
             id=prior.id if prior else allocator.random("sum"),
             text=text,
             excerpt=prior.excerpt if prior else None,

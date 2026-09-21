@@ -1,7 +1,7 @@
 """FastAPI wiring for the Source CV service.
 
 The service is built lazily and takes its parser through a callable, so the endpoints that need no model
-(status, review, edit, delete) keep working when GROQ_API_KEY is missing; only an upload or re-parse
+(status, review, edit, delete) keep working when the provider key is missing; only an upload or re-parse
 reports `llm_not_configured`. Tests override `get_source_cv_service` with app.dependency_overrides.
 """
 from functools import lru_cache

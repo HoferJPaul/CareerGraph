@@ -3,13 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { api, describeApiError, type DescribedError } from "../api/client";
 import ErrorNotice from "../components/ErrorNotice";
 import Progress from "../components/Progress";
+import SourceCvCard from "../components/SourceCvCard";
 import StepIndicator from "../components/StepIndicator";
 import { FallbackBanner } from "../components/TechnicalDetails";
 import { useAnalysis } from "../context/AnalysisContext";
 import type { LlmStatus } from "../types/career";
 
 export default function NewCvPage() {
-  const { jobDescription, setJobDescription, setAnalysis } = useAnalysis();
+  const { jobDescription, setJobDescription, setAnalysis, sourceCvStatus } = useAnalysis();
   const [status, setStatus] = useState<LlmStatus | null>(null);
   const [loadingDemo, setLoadingDemo] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -80,6 +81,8 @@ export default function NewCvPage() {
         <FallbackBanner what="Requirement extraction is keyword-based and CV writing is rule-based." />
       )}
 
+      <SourceCvCard llmStatus={status} />
+
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <label htmlFor="jd" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
@@ -118,6 +121,13 @@ export default function NewCvPage() {
           </button>
         </div>
         {error && <ErrorNotice error={error} onRetry={handleAnalyze} busy={analyzing} />}
+        {sourceCvStatus !== null && !sourceCvStatus.exists && (
+          <div className="notice notice-incomplete" role="note" style={{ marginTop: 14, marginBottom: 0 }}>
+            <strong>Without a source CV the generated CV may be incomplete.</strong> It will contain only the
+            evidence-backed sections tailored from your career graph — not your contact details, links, education or
+            your full employment history. Upload one above for a complete CV.
+          </div>
+        )}
       </div>
 
       {analyzing && (

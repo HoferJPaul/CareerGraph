@@ -156,6 +156,104 @@ def test_deterministic_writer_and_renderer_still_exist_as_labelled_dev_fallback(
     assert (ROOT / "backend" / "cv_markdown.py").exists()
 
 
+# ---- Source CV ---------------------------------------------------------------------------------------------
+
+
+def test_source_cv_card_sits_above_the_job_description_input_and_explains_itself() -> None:
+    page = _source("pages", "NewCv.tsx")
+    assert page.index("<SourceCvCard") < page.index('id="jd"'), "the Source CV card belongs above the job-description input"
+    card = _source("components", "SourceCvCard.tsx")
+    for phrase in (
+        "complete base CV", "contact details", "education", "employment history",  # what it is for
+        "Drag and drop", "Choose a file", "PDF", "DOCX",  # both ways to add a file
+        "sent to the AI provider",  # the processing disclosure
+        "Delete source CV", "Replace CV", "Review and correct",
+    ):
+        assert phrase in card, f"SourceCvCard is missing {phrase!r}"
+    assert "maxUploadBytes" in card, "the size limit shown comes from the server, not a hard-coded number"
+
+
+def test_first_page_still_allows_analysis_without_a_source_cv_and_says_the_result_is_incomplete() -> None:
+    page = _source("pages", "NewCv.tsx")
+    assert "Without a source CV the generated CV may be incomplete" in page and "complete CV" in page
+    handler = _function_body(page, "handleAnalyze")
+    assert "sourceCv" not in handler, "analysis must not depend on a source CV being present"
+    assert "disabled={analyzing || !jobDescription.trim() || tooLong}" in page
+
+
+def test_source_cv_processing_shows_every_stage_prevents_duplicates_and_offers_retry() -> None:
+    card = _source("components", "SourceCvCard.tsx")
+    for stage in ('"uploading"', '"extracting"', '"parsing"', '"validating"', '"saving"'):
+        assert stage in card
+    for label in ("Uploading the file", "Reading the text", "Parsing it", "Checking every value", "Saving it privately"):
+        assert label in card
+    run = _function_body(card, "run")
+    assert "inFlight.current" in run, "a ref guard must stop duplicate submissions"
+    assert "ErrorNotice" in card and "retryLabel" in card and "canRetry" in card
+    client = _source("api", "client.ts")
+    assert "application/x-ndjson" in client and "xhr.upload.onload" in client, "stages come from the server, not a timer"
+    assert "setInterval" not in card and "setTimeout" not in card, "no simulated progress"
+
+
+def test_the_destructive_delete_is_separated_and_confirmed() -> None:
+    card = _source("components", "SourceCvCard.tsx")
+    assert 'className="danger-zone"' in card and "confirmingDelete" in card
+    assert "Yes, delete source CV" in card and "alertdialog" in card
+    assert card.index("danger-zone") > card.index("Replace CV"), "delete is not next to the everyday actions"
+
+
+def test_source_cv_ui_never_displays_internal_ids_or_the_key() -> None:
+    for name in ("SourceCvCard.tsx", "SourceCvEditor.tsx", "SourceCvAnalysisPanel.tsx", "ProvenancePanel.tsx"):
+        text = _source("components", name)
+        assert not re.search(r"(?<!key=)\{\s*[\w.?]+\.(?:id|entryId|evidenceIds?)\s*\}", text), f"{name} renders an internal id"
+        assert "sha256" not in text and "excerpt" not in text, f"{name} touches server-only provenance fields"
+    types = _source("types", "career.ts")
+    view = types[types.index("export interface SourceProfileView") : types.index("export interface SourceCvStatus")]
+    assert "excerpt" not in view and "sha256" not in view
+
+
+def test_source_cv_calls_go_through_the_api_client_and_generation_still_sends_only_an_analysis_id() -> None:
+    client = _source("api", "client.ts")
+    for path in ('"/api/source-cv"', '"/api/source-cv/status"', '"/api/source-cv/reparse"'):
+        assert path in client
+    for verb in ("method: \"PUT\"", "method: \"DELETE\""):
+        assert verb in client
+    generate = client[client.index("generateCv:") : client.index("// ---- Source CV")]
+    assert "analysisId" in generate and "pageBudget" in generate
+    for forbidden in ("sourceProfile", "cvContext", "evidence", "employment"):
+        assert forbidden not in generate, f"generation must not send {forbidden}"
+    for page in ("MatchReview.tsx", "CvPreview.tsx"):
+        assert "sourceProfile" not in _source("pages", page) and "toEdit" not in _source("pages", page)
+
+
+def test_match_and_cv_pages_show_how_the_source_cv_was_used_and_when_it_is_stale() -> None:
+    panel = _source("components", "SourceCvAnalysisPanel.tsx")
+    assert "changed after this analysis" in panel and "deleted after this analysis" in panel
+    assert "No source CV was used" in panel and "Possible gaps in your timeline" in panel
+    assert "Additional experience" in panel and "Left out until resolved" in panel
+    assert "SourceCvAnalysisPanel" in _source("pages", "MatchReview.tsx")
+    cv_page = _source("pages", "CvPreview.tsx")
+    assert "SourceCvAnalysisPanel" in cv_page and "layoutWarnings" in cv_page and "pageBudget" in cv_page
+    assert "never cut" in cv_page or "nothing is ever cut" in cv_page.lower()
+
+
+def test_provenance_labels_source_evidence_apart_from_graph_evidence() -> None:
+    panel = _source("components", "ProvenancePanel.tsx")
+    assert 'e.origin === "source"' in panel and "Your CV" in panel and "Additional experience" in panel
+
+
+def test_rejected_cvs_explain_which_rules_failed_using_codes_only() -> None:
+    notice = _source("components", "ErrorNotice.tsx")
+    for code in ("gap_claimed", "unsupported_source_claim", "unsupported_number", "unknown_evidence_id"):
+        assert code in notice
+    assert "repairAttempts" in notice and "automatic repair" in notice
+
+
+def test_processing_disclosure_names_the_provider_only_in_words_and_never_a_key() -> None:
+    card = _source("components", "SourceCvCard.tsx")
+    assert "Zero Data Retention" in card and "there is no login" in card
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
     failures = 0

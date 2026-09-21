@@ -1,12 +1,23 @@
 import type { BulletProvenance, EvidenceRef } from "../types/career";
 
 const SECTION_LABEL: Record<BulletProvenance["section"], string> = {
+  profile: "Profile",
   experience: "Experience",
+  additional: "Additional experience",
   projects: "Projects",
   education: "Education",
 };
 
 function EvidenceLine({ e }: { e: EvidenceRef }) {
+  if (e.origin === "source") {
+    // A statement from the candidate's own CV -- shown as written, and never as graph-verified evidence.
+    return (
+      <li>
+        <span className="badge badge-neutral">Your CV</span> {e.label}
+        {e.owner && <div className="prov-note">from your source CV, under {e.owner}</div>}
+      </li>
+    );
+  }
   if (e.kind === "transferable") {
     return (
       <li>

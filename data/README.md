@@ -13,3 +13,10 @@ redistributed:
 
 To run the pipeline yourself, supply your own versions of these three files with the same shape,
 then follow the "Run it" steps in the root `README.md`.
+
+## private/
+
+`data/private/` is created at runtime by the web app and holds the **Source CV**: the CV file you upload
+and the structured profile parsed from it (your name, contact details and work history). The whole
+directory is gitignored -- never commit it. Delete it from the app ("Delete source CV") or by removing
+the directory. Set `CAREERGRAPH_PRIVATE_DIR` to store it somewhere else.

@@ -5,13 +5,14 @@ import ErrorNotice from "../components/ErrorNotice";
 import EvidencePanel from "../components/EvidencePanel";
 import Progress from "../components/Progress";
 import RequirementCard, { type CardKind } from "../components/RequirementCard";
+import SourceCvAnalysisPanel from "../components/SourceCvAnalysisPanel";
 import StepIndicator from "../components/StepIndicator";
 import { ExtractionDetails, FallbackBanner } from "../components/TechnicalDetails";
 import { useAnalysis } from "../context/AnalysisContext";
 import type { RequirementMatch } from "../types/career";
 
 export default function MatchReviewPage() {
-  const { analysis, cvContext, template, setCv } = useAnalysis();
+  const { analysis, cvContext, template, setCv, pageBudget, sourceCvStatus } = useAnalysis();
   const [active, setActive] = useState<RequirementMatch | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<DescribedError | null>(null);
@@ -43,7 +44,7 @@ export default function MatchReviewPage() {
     setGenerating(true);
     setError(null);
     try {
-      const result = await api.generateCv(analysis.analysisId, template);
+      const result = await api.generateCv(analysis.analysisId, template, pageBudget);
       setCv(result);
       navigate("/cv");
     } catch (err) {
@@ -138,6 +139,10 @@ export default function MatchReviewPage() {
           </span>
         </div>
         <ExtractionDetails info={analysis.extraction} />
+      </div>
+
+      <div className="section" style={{ marginTop: 0 }}>
+        <SourceCvAnalysisPanel info={analysis.sourceCv} status={sourceCvStatus} />
       </div>
 
       {groups.map((group) => (

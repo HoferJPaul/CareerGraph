@@ -75,3 +75,53 @@ def test_live_cv_generation_is_grounded_in_the_fixture_evidence() -> None:
     print(f"\nwrote {len(report.bullets)} grounded bullets with {out.model}; usage={out.usage}")
     assert report.bullets
     assert "cloudwatch" not in out.structured_cv.model_dump_json().lower()
+
+
+# ---- Source CV (also opt-in; SAME switch and key as above; synthetic fictional CV only) -------------------------------------------------
+#
+# Two more small real calls each (parse; write + verify [+ repair only if the model needs it]). As above, a
+# rejection here is a REAL signal: printed violation codes tell you whether it was a fluke or a prompt problem.
+
+
+def test_live_source_cv_parse_is_grounded_in_the_document() -> None:
+    from datetime import datetime, timezone
+
+    from llm.source_profile import GroqSourceCvParser
+    from source_cv.errors import ProfileRejectedError
+    from source_cv.grounding import build_profile
+    from source_cv.schema import ParserInfo, UploadInfo
+    from source_fixtures import EMAIL, cv_text
+
+    settings = _live_settings()
+    output = GroqSourceCvParser(settings, GroqStructuredClient(settings)).parse(cv_text())
+    try:
+        profile = build_profile(
+            output.draft, cv_text(),
+            upload=UploadInfo(originalFilename="synthetic.pdf", detectedType="pdf", sha256="0" * 64, sizeBytes=1),
+            parser=ParserInfo(provider="groq", model=output.model, mode=output.mode), revision=1, now=datetime.now(timezone.utc),
+        )
+    except ProfileRejectedError as exc:
+        pytest.fail(f"the model's parse was rejected (correctly): {exc.violations}")
+    print(f"\nparsed {len(profile.employment)} positions, {len(profile.education)} education entries with {output.model}; "
+          f"usage={output.usage}; warnings={[w.code for w in profile.warnings]}")
+    assert len(profile.employment) == 3 and profile.contact.email == EMAIL
+    assert {e.employer for e in profile.employment} == {"Acme Analytics", "Nordwind Logistics", "Kaffeehaus Ringstrasse"}
+
+
+def test_live_complete_cv_generation_keeps_every_position_and_passes_validation() -> None:
+    from cv_generation import build_complete_cv_document
+    from llm.complete_writers import GroqCompleteWriter, GroqSupportVerifier
+    from source_helpers import make_ci
+
+    settings = _live_settings()
+    client = GroqStructuredClient(settings)
+    ci = make_ci()
+    try:
+        document = build_complete_cv_document(GroqCompleteWriter(settings, client), GroqSupportVerifier(settings, client), ci)
+    except ProvenanceValidationError as exc:
+        pytest.fail(f"the model produced an ungrounded CV (rejected correctly): {[v.code for v in exc.violations]}")
+    entries = [*document.structured_cv.experience, *document.structured_cv.additionalExperience]
+    print(f"\nwrote a complete CV with {document.model}; repairs={document.repair_attempts}; "
+          f"requests={document.attempts}; usage={document.usage}; verification={document.verification}")
+    assert {e.entryId for e in entries} == {r.role_id for r in ci.recon.roles}
+    assert "cloudwatch" not in document.markdown.lower() and "aws" not in document.markdown.lower()

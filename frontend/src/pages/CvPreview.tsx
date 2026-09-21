@@ -5,6 +5,7 @@ import { api, describeApiError, type DescribedError } from "../api/client";
 import ErrorNotice from "../components/ErrorNotice";
 import Progress from "../components/Progress";
 import ProvenancePanel from "../components/ProvenancePanel";
+import SourceCvAnalysisPanel from "../components/SourceCvAnalysisPanel";
 import StepIndicator from "../components/StepIndicator";
 import { FallbackBanner, GenerationDetails } from "../components/TechnicalDetails";
 import { useAnalysis } from "../context/AnalysisContext";
@@ -16,7 +17,7 @@ const TEMPLATES = [
 ];
 
 export default function CvPreviewPage() {
-  const { analysis, cv, setCv, template } = useAnalysis();
+  const { analysis, cv, setCv, template, pageBudget, setPageBudget, sourceCvStatus } = useAnalysis();
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<DescribedError | null>(null);
   const [copied, setCopied] = useState(false);
@@ -29,7 +30,7 @@ export default function CvPreviewPage() {
     setGenerating(true);
     setError(null);
     try {
-      setCv(await api.generateCv(analysis.analysisId, template));
+      setCv(await api.generateCv(analysis.analysisId, template, pageBudget));
     } catch (err) {
       setError(describeApiError(err, "Couldn't generate the CV."));
     } finally {
@@ -37,6 +38,10 @@ export default function CvPreviewPage() {
       setGenerating(false);
     }
   }
+
+  // The Source CV panel already lists gaps and disputes, so the notices below skip those two to avoid saying them twice.
+  const shownInPanel = new Set(cv?.sourceCv && cv.generation.completeCv ? ["chronology_gap", "unresolved_conflict"] : []);
+  const notices = (cv?.layoutWarnings ?? []).filter((w) => !shownInPanel.has(w.code));
 
   if (!analysis) {
     return (
@@ -76,8 +81,10 @@ export default function CvPreviewPage() {
       <div className="page-header">
         <h1>Your CV</h1>
         <p>
-          Every bullet below was written from your verified career evidence. Open “Where each claim comes from” to
-          inspect the evidence behind any line.
+          {analysis.sourceCv.used
+            ? "This is a complete CV: your contact details, education and full employment history come from your source CV, and every bullet is backed by evidence. "
+            : "This CV contains only the evidence-backed sections tailored from your career graph. "}
+          Open “Where each claim comes from” to inspect the evidence behind any line.
         </p>
       </div>
 
@@ -106,7 +113,19 @@ export default function CvPreviewPage() {
               </button>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {analysis.sourceCv.used && (
+              <label className="field-inline" title="A length target. Exceeding it shows a warning; nothing is ever cut from your chronology.">
+                <span>Target length</span>
+                <select value={pageBudget} onChange={(e) => setPageBudget(Number(e.target.value))} disabled={generating}>
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>
+                      {n} {n === 1 ? "page" : "pages"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <Link to="/match-review" className="btn" style={{ textDecoration: "none" }}>
               ← Back to matches
             </Link>
@@ -125,9 +144,25 @@ export default function CvPreviewPage() {
             steps={[
               "Writing recruiter-facing text from the verified evidence",
               "Checking that every claim traces back to your career evidence",
-              "Rendering the finished CV",
+              "Repairing any claim that fails a check (at most twice), then rendering the finished CV",
             ]}
           />
+        </div>
+      )}
+
+      {notices.length > 0 && (
+        <div className="section" style={{ marginTop: 0 }}>
+          {notices.map((w, i) => (
+            <div key={`${w.code}-${i}`} className={`notice ${w.severity === "warning" ? "notice-fallback" : ""}`} role="note">
+              {w.message}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {cv?.sourceCv && cv.generation.completeCv && (
+        <div className="section" style={{ marginTop: 0 }}>
+          <SourceCvAnalysisPanel info={cv.sourceCv} status={sourceCvStatus} showTreatment />
         </div>
       )}
 
