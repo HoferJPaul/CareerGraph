@@ -240,6 +240,11 @@ estimates, not measurements: each screen's *Technical details* shows the real to
   Match and CV steps show a busy state (with an elapsed-seconds counter) while the request runs;
   latency has not been measured against the live API yet.
 - Analyses are held in memory: a backend restart or a one-hour wait means re-running **Analyze job**.
+  The store is per-process, so run a **single** uvicorn worker/instance — with several, CV
+  generation can land on a process that never saw the analysis and return `analysis_not_found`
+  (shared storage would be needed to scale out).
+- Neo4j credentials are still read only from the `.env` file (pre-existing behaviour); the LLM
+  settings also honour real environment variables. CORS allows `localhost:5173` only.
 - One CV template (*Modern*); the candidate name on the CV is a fixed default in `cv_writer.py`.
 - Skill coverage is bounded by the graph's vocabulary; requirements the graph has no node for are
   always reported as gaps (only capability-level *related* evidence can soften that, and never in
