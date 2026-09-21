@@ -2,9 +2,7 @@ import { NavLink, Route, HashRouter, Routes } from "react-router-dom";
 import { AnalysisProvider } from "./context/AnalysisContext";
 import CareerGraphPage from "./pages/CareerGraph";
 import NewCvPage from "./pages/NewCv";
-import RequirementsUploadPage from "./pages/RequirementsUpload";
 import MatchReviewPage from "./pages/MatchReview";
-import CvContextPage from "./pages/CvContext";
 import CvPreviewPage from "./pages/CvPreview";
 
 function NavItem({ to, label }: { to: string; label: string }) {
@@ -30,20 +28,16 @@ export default function App() {
             <nav className="app-nav">
               <NavItem to="/" label="CareerGraph" />
               <NavItem to="/new-cv" label="1 Job" />
-              <NavItem to="/requirements" label="2 Claude" />
-              <NavItem to="/match-review" label="3 Neo4j" />
-              <NavItem to="/cv-context" label="4 Claude" />
-              <NavItem to="/cv-preview" label="Debug" />
+              <NavItem to="/match-review" label="2 Match" />
+              <NavItem to="/cv" label="3 CV" />
             </nav>
           </header>
           <main className="app-main">
             <Routes>
               <Route path="/" element={<CareerGraphPage />} />
               <Route path="/new-cv" element={<NewCvPage />} />
-              <Route path="/requirements" element={<RequirementsUploadPage />} />
               <Route path="/match-review" element={<MatchReviewPage />} />
-              <Route path="/cv-context" element={<CvContextPage />} />
-              <Route path="/cv-preview" element={<CvPreviewPage />} />
+              <Route path="/cv" element={<CvPreviewPage />} />
             </Routes>
           </main>
         </div>

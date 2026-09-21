@@ -109,24 +109,69 @@ export interface CVContext {
   cvGuidance: CVGuidance;
 }
 
-export interface RequirementList {
-  requirements: Requirement[];
+export interface TokenUsage {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
 }
 
+// Safe extraction metadata for the technical-details section. The backend never returns
+// prompts, job-description text or raw provider errors, so none of that can appear here.
+export interface ExtractionInfo {
+  provider: string; // "groq" | "dev"
+  model: string | null;
+  mode: "llm_structured" | "cached_manual" | "heuristic_keyword";
+  note: string;
+  requirementCount: number;
+  tokenUsage: TokenUsage | null;
+  retried: boolean;
+  attempts: number;
+  devFallback: boolean; // true when a development fallback (not a real LLM) produced this
+}
+
+// The CVContext also stays server-side under `analysisId`: CV generation looks it up there,
+// so the browser never supplies the evidence a CV is written from.
 export interface AnalyzeResponse {
-  extractionMode: "cached_manual" | "heuristic_keyword";
-  extractionNote: string;
+  analysisId: string;
+  extraction: ExtractionInfo;
   requirementCount: number;
-  requirementsPath: string;
   cvContext: CVContext;
 }
 
-// Primary presentation-flow response: matching/tailoring only, run against an
-// already-extracted RequirementList (Claude's output, pasted/uploaded by the
-// user). Never includes extraction metadata -- no extraction happened here.
-export interface RequirementsAnalyzeResponse {
-  requirementCount: number;
-  cvContext: CVContext;
+export interface GenerationInfo {
+  provider: string;
+  model: string | null;
+  mode: "llm_structured" | "deterministic_fallback";
+  devFallback: boolean;
+  provenanceValidated: boolean;
+  tokenUsage: TokenUsage | null;
+  retried: boolean;
+  attempts: number;
+}
+
+export interface EvidenceRef {
+  label: string;
+  kind: "story" | "achievement" | "transferable";
+  sourceType: string | null;
+  owner: string | null; // the experience/project this evidence belongs to
+  transferableFor: string | null; // the related capability, for transferable evidence
+  relatedGaps: string[]; // literal gaps a transferable item does NOT satisfy
+}
+
+export interface BulletProvenance {
+  section: "experience" | "projects" | "education";
+  entry: string;
+  text: string;
+  evidence: EvidenceRef[];
+}
+
+export interface LlmStatus {
+  provider: string;
+  extractionModel: string | null;
+  writingModel: string | null;
+  configured: boolean;
+  devFallback: boolean;
+  maxJobDescriptionChars: number;
 }
 
 export interface GraphSummary {
@@ -165,4 +210,6 @@ export interface NodeDetail {
 export interface CvGenerateResponse {
   markdown: string;
   template: string;
+  generation: GenerationInfo;
+  provenance: BulletProvenance[];
 }

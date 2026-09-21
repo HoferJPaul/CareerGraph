@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
-import { api } from "../api/client";
+import { api, describeApiError, type DescribedError } from "../api/client";
+import ErrorNotice from "../components/ErrorNotice";
+import Progress from "../components/Progress";
+import ProvenancePanel from "../components/ProvenancePanel";
+import StepIndicator from "../components/StepIndicator";
+import { FallbackBanner, GenerationDetails } from "../components/TechnicalDetails";
 import { useAnalysis } from "../context/AnalysisContext";
 
 const TEMPLATES = [
@@ -11,62 +16,52 @@ const TEMPLATES = [
 ];
 
 export default function CvPreviewPage() {
-  const { analysis, cvContext, template, setTemplate, cvMarkdown, setCvMarkdown } = useAnalysis();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { analysis, cv, setCv, template } = useAnalysis();
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<DescribedError | null>(null);
   const [copied, setCopied] = useState(false);
+  // A ref, not just state: two rapid clicks can both run before a state update re-renders.
+  const inFlight = useRef(false);
 
-  // Debug-only page: works from either the primary flow's cvContext (Claude-
-  // extracted requirements, validated and matched) or the dev-fallback single-shot
-  // analysis, whichever is populated.
-  const effectiveCvContext = cvContext ?? analysis?.cvContext ?? null;
-
-  async function handleGenerate(nextTemplate = template) {
-    if (!effectiveCvContext) return;
-    setLoading(true);
+  async function handleGenerate() {
+    if (inFlight.current || !analysis) return;
+    inFlight.current = true;
+    setGenerating(true);
     setError(null);
     try {
-      const result = await api.generateCv(effectiveCvContext, nextTemplate);
-      setCvMarkdown(result.markdown);
+      setCv(await api.generateCv(analysis.analysisId, template));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate CV.");
+      setError(describeApiError(err, "Couldn't generate the CV."));
     } finally {
-      setLoading(false);
+      inFlight.current = false;
+      setGenerating(false);
     }
   }
 
-  // Auto-generate once on arrival so the demo flow doesn't need an extra click
-  // when coming straight from Match Review.
-  useEffect(() => {
-    if (effectiveCvContext && !cvMarkdown && !loading) {
-      handleGenerate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveCvContext]);
-
-  if (!effectiveCvContext) {
+  if (!analysis) {
     return (
       <div>
+        <StepIndicator current={3} />
         <div className="page-header">
-          <h1>CV Preview (debug)</h1>
+          <h1>Your CV</h1>
         </div>
         <div className="empty-state">
-          No context yet. <Link to="/new-cv">Paste a job description</Link> to get started.
+          Nothing to show yet. <Link to="/new-cv">Paste a job description</Link> to get started.
         </div>
       </div>
     );
   }
 
   async function handleCopy() {
-    if (!cvMarkdown) return;
-    await navigator.clipboard.writeText(cvMarkdown);
+    if (!cv) return;
+    await navigator.clipboard.writeText(cv.markdown);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
   function handleDownload() {
-    if (!cvMarkdown) return;
-    const blob = new Blob([cvMarkdown], { type: "text/markdown" });
+    if (!cv) return;
+    const blob = new Blob([cv.markdown], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -77,13 +72,18 @@ export default function CvPreviewPage() {
 
   return (
     <div>
+      <StepIndicator current={3} />
       <div className="page-header">
-        <h1>CV Preview (debug)</h1>
+        <h1>Your CV</h1>
         <p>
-          Deterministic rule-based renderer — dev/debug only. The presentation flow instead hands cv_context.json
-          to Claude directly (see the CV Context step) so Claude can make the narrative decisions.
+          Every bullet below was written from your verified career evidence. Open “Where each claim comes from” to
+          inspect the evidence behind any line.
         </p>
       </div>
+
+      {cv?.generation.devFallback && (
+        <FallbackBanner what="This CV was assembled by the rule-based writer." />
+      )}
 
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
@@ -93,10 +93,6 @@ export default function CvPreviewPage() {
                 key={t.id}
                 className="btn"
                 disabled={!t.available}
-                onClick={() => {
-                  setTemplate(t.id);
-                  handleGenerate(t.id);
-                }}
                 style={{
                   background: template === t.id ? "var(--color-accent-soft)" : undefined,
                   borderColor: template === t.id ? "var(--color-accent)" : undefined,
@@ -110,45 +106,61 @@ export default function CvPreviewPage() {
               </button>
             ))}
           </div>
-          <button className="btn btn-primary" onClick={() => handleGenerate()} disabled={loading}>
-            {loading ? "Generating…" : cvMarkdown ? "Regenerate CV" : "Generate CV"}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Link to="/match-review" className="btn" style={{ textDecoration: "none" }}>
+              ← Back to matches
+            </Link>
+            <button className="btn btn-primary" onClick={handleGenerate} disabled={generating}>
+              {generating ? "Generating…" : cv ? "Regenerate CV" : "Generate evidence-backed CV"}
+            </button>
+          </div>
         </div>
-        {error && <div className="error-box">{error}</div>}
+        {error && <ErrorNotice error={error} onRetry={handleGenerate} retryLabel="Generate again" busy={generating} />}
       </div>
 
-      {loading && !cvMarkdown && (
-        <div className="empty-state section">Generating your tailored CV from verified evidence…</div>
+      {generating && (
+        <div className="section">
+          <Progress
+            title="Writing your CV"
+            steps={[
+              "Writing recruiter-facing text from the verified evidence",
+              "Checking that every claim traces back to your career evidence",
+              "Rendering the finished CV",
+            ]}
+          />
+        </div>
       )}
 
-      {cvMarkdown && (
+      {cv && (
         <div className="grid section" style={{ gridTemplateColumns: "1.3fr 1fr", alignItems: "start" }}>
           <div>
             <div className="section-title">
               <h2>Preview</h2>
-            </div>
-            <div className="cv-page-wrap">
-              <div className="cv-page">
-                <div className="cv-document">
-                  <ReactMarkdown>{cvMarkdown}</ReactMarkdown>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div>
-            <div className="section-title">
-              <h2>Markdown source</h2>
               <div style={{ display: "flex", gap: 8 }}>
                 <button className="btn" onClick={handleCopy}>
-                  {copied ? "Copied!" : "Copy"}
+                  {copied ? "Copied!" : "Copy Markdown"}
                 </button>
                 <button className="btn" onClick={handleDownload}>
                   Download .md
                 </button>
               </div>
             </div>
-            <div className="card" style={{ maxHeight: 720, overflowY: "auto", background: "var(--color-bg-subtle)" }}>
-              <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.78rem", margin: 0 }}>{cvMarkdown}</pre>
+            <div className="cv-page-wrap">
+              <div className="cv-page">
+                <div className="cv-document">
+                  <ReactMarkdown>{cv.markdown}</ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="section-title">
+              <h2>Where each claim comes from</h2>
+              <span className="count">{cv.provenance.length}</span>
+            </div>
+            <div className="card">
+              <ProvenancePanel provenance={cv.provenance} />
+              <GenerationDetails info={cv.generation} />
             </div>
           </div>
         </div>
