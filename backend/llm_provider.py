@@ -1,31 +1,27 @@
 """LLM abstraction for JD -> requirements extraction.
 
-CareerGraph's requirement extraction was designed for an interactive LLM
-(Claude Code reading a JD and hand-authoring requirements.json against the
-RequirementList schema -- see match_job.py's module docstring). This project
-has no external LLM API configured (no Anthropic/OpenAI credits), so this
-module deliberately does NOT fake an unattended Claude call.
+`LLMProvider` is the ONE interface the pipeline depends on for extraction. Every job
+description passes through `extract_requirements()` and comes out as a validated
+`RequirementList` before capability expansion or Neo4j matching ever sees it.
 
-Instead it exposes an LLMProvider interface with two honest, non-LLM
-implementations, so the rest of the pipeline (capability suggestion,
-matching, tailoring) can still run unattended end-to-end for this milestone:
+Implementations:
 
-  - ManualFileLLMProvider: returns the curated requirements.json already
-    authored interactively (by Claude Code) for jobs.txt, when the pasted
-    text is recognizably that same JD. This is the "use the existing
-    requirements file / manual adapter" shortcut this milestone explicitly
-    allows in place of faking a live extraction call.
-  - HeuristicKeywordLLMProvider: a real, fully-automatic (if unsophisticated)
-    fallback for ANY pasted text -- scans it for literal CareerGraph Skill
-    names/aliases and builds literal requirements from whatever it finds.
-    No semantic understanding, no paraphrase handling, no capability
-    inference: an honest keyword matcher, not a stand-in for real extraction.
+  - backend/llm/groq_extraction.GroqLLMProvider -- the production provider
+    (LLM_PROVIDER=groq). All provider-specific code lives under backend/llm/, so another
+    provider can be added by implementing this interface -- nothing else changes.
 
-DevLLMProvider composes the two: try the cached/manual match first, fall back
-to the heuristic keyword matcher for anything else. To make extraction fully
-automatic and semantically capable for arbitrary job descriptions, swap in a
-provider backed by a real LLM API implementing the same `LLMProvider`
-interface -- nothing else in the pipeline needs to change.
+  - DevLLMProvider (this file) -- an explicitly selected DEVELOPMENT FALLBACK
+    (LLM_PROVIDER=dev). It never runs implicitly: a failed Groq call is surfaced as an error,
+    never silently downgraded to these lower-quality extractors. It composes two honest,
+    non-LLM implementations:
+      * ManualFileLLMProvider: returns the curated data/requirements.json for the demo job
+        description (data/jobs.txt) when the pasted text is recognizably that same JD.
+      * HeuristicKeywordLLMProvider: scans any pasted text for literal CareerGraph Skill
+        names/aliases. No semantic understanding, no paraphrase handling, no capability
+        inference -- an honest keyword matcher, not a stand-in for real extraction.
+
+Every ExtractionResult says which mode produced it (`mode`, `provider`, `model`), so the UI
+can label fallback output clearly and never present it as equivalent to a real extraction.
 """
 import json
 import re
@@ -37,7 +33,7 @@ from typing import Optional
 from capability_suggest import list_vocabulary
 from requirement_schema import Requirement, RequirementList
 
-ExtractionMode = str  # "cached_manual" | "heuristic_keyword"
+ExtractionMode = str  # "llm_structured" | "cached_manual" | "heuristic_keyword"
 
 
 def same_job_description(cached_jd: str, pasted_jd: str) -> bool:
@@ -54,11 +50,24 @@ def same_job_description(cached_jd: str, pasted_jd: str) -> bool:
     return len(probe) > 40 and probe in pasted_flat
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
 @dataclass
 class ExtractionResult:
     requirements: RequirementList
     mode: ExtractionMode
     note: str
+    # Safe debugging metadata -- never prompts, job-description text or provider errors.
+    provider: str = "dev"
+    model: Optional[str] = None
+    usage: Optional[TokenUsage] = None
+    retried: bool = False
+    attempts: int = 1
 
 
 class LLMProvider(ABC):
@@ -102,8 +111,8 @@ class ManualFileLLMProvider(LLMProvider):
             requirements=RequirementList.model_validate(data),
             mode="cached_manual",
             note=(
-                "Recognized this as the demo job description, so it reused Claude Code's "
-                "already-verified extraction instead of running a live extraction pass."
+                "Development fallback: recognized this as the demo job description, so it reused the "
+                "curated requirements file instead of running a live LLM extraction."
             ),
         )
 
@@ -154,9 +163,9 @@ class HeuristicKeywordLLMProvider(LLMProvider):
             requirements=RequirementList(requirements=requirements),
             mode="heuristic_keyword",
             note=(
-                "Automatic keyword extraction: found literal CareerGraph skill names in the "
-                "pasted text. This is a lightweight fallback, not full semantic understanding -- "
-                "paraphrased or implied requirements can be missed."
+                "Development fallback: keyword extraction found literal CareerGraph skill names in "
+                "the pasted text. This is not a real LLM extraction -- paraphrased or implied "
+                "requirements can be missed."
             ),
         )
 
