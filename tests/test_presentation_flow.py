@@ -1,22 +1,19 @@
-"""Structural regression tests for the presentation-flow frontend contract:
+"""Structural regression tests for the autonomous-flow frontend contract:
 
-  - Screen 1 (Job Description) only ever generates a Claude prompt in its primary
-    path; the raw-JD auto-analyze call is confined to an explicitly labeled debug
-    panel, never the primary "Generate Claude Prompt" button.
-  - Screen 2 (Upload Requirements) never re-runs extraction -- it only validates
-    and matches an already-extracted RequirementList.
-  - The generated CV-writing prompt actually embeds the real cv_context JSON
-    (not a placeholder), and the extraction prompt actually embeds the real JD.
-  - The primary flow's CV Context screen never mentions/routes through
-    cv_evidence.json, while cv_evidence.py itself is NOT deleted (kept as an
-    optional/experimental layer per its own CLI/tests).
+  - The primary flow is Job -> Match -> CV inside the app. There is NO manual Claude hand-off
+    anywhere: no prompt to copy, no requirements.json to upload, no response to paste back, no
+    instruction to leave the application.
+  - The Job page only ever calls the server-side analyze endpoint; the Match page only ever
+    generates the CV from the server-side analysisId (the browser never sends evidence).
+  - Development-fallback output is labelled, provider/model appear only in a collapsed
+    technical-details section, and no API key / system prompt exists in frontend code.
+  - The graph explorer, the match-review stage and cv_evidence.py's optional layer survive.
 
-No JS test framework is configured for this project (see frontend/package.json),
-so these are plain text/structural checks against the .tsx/.ts source -- the same
-static-guard style already used by backend/test_api.py's write-Cypher AST scan,
-adapted to source text since these are TypeScript, not Python.
+No JS test framework is configured for this project (see frontend/package.json), so these are
+plain text/structural checks against the .tsx/.ts source -- the same static-guard style used by
+backend/test_api.py's write-Cypher AST scan, adapted to source text since these are TypeScript.
 
-Usage:
+Runs offline (no Neo4j, no Groq):
     python tests/test_presentation_flow.py
 """
 import re
@@ -26,78 +23,137 @@ ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_SRC = ROOT / "frontend" / "src"
 
 
+def _source(*parts: str) -> str:
+    return (FRONTEND_SRC.joinpath(*parts)).read_text(encoding="utf-8")
+
+
+def _all_frontend_source() -> dict[str, str]:
+    return {
+        p.relative_to(FRONTEND_SRC).as_posix(): p.read_text(encoding="utf-8")
+        for p in FRONTEND_SRC.rglob("*")
+        if p.is_file() and p.suffix in {".ts", ".tsx", ".css"}
+    }
+
+
 def _function_body(source: str, fn_name: str) -> str:
-    """Best-effort slice from `function fn_name` (or `async function fn_name`) to
-    the next top-level `function`/`async function` keyword, or end of file."""
+    """The body of `function fn_name` / `async function fn_name`, found by brace matching (so
+    JSX and helpers that follow the function are not swept in)."""
     match = re.search(rf"(?:async\s+)?function\s+{re.escape(fn_name)}\b", source)
     assert match, f"could not find function {fn_name!r} in source"
-    rest = source[match.end():]
-    next_fn = re.search(r"\n\s*(?:async\s+)?function\s+\w+", rest)
-    return rest[: next_fn.start()] if next_fn else rest
+    start = source.index("{", match.end())
+    depth = 0
+    for i in range(start, len(source)):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : i + 1]
+    raise AssertionError(f"unbalanced braces in {fn_name!r}")
 
 
-def test_job_description_screen_primary_path_only_generates_prompt() -> None:
-    source = (FRONTEND_SRC / "pages" / "NewCv.tsx").read_text(encoding="utf-8")
-
-    primary = _function_body(source, "handleGeneratePrompt")
-    assert "buildExtractionPrompt" in primary
-    assert "analyzeJob" not in primary, (
-        "the primary 'Generate Claude Prompt' handler must never call the raw-JD "
-        "auto-analyze endpoint"
-    )
-
-    debug = _function_body(source, "handleDebugAutoAnalyze")
-    assert "analyzeJob" in debug, "the raw-JD auto-analyze call must live in the debug panel only"
-
-    # The debug panel must be visually/structurally distinct, not the default view.
-    assert "debugOpen" in source and "Debug tools" in source
+def test_primary_flow_contains_no_manual_claude_handoff() -> None:
+    forbidden = [
+        "Generate Claude Prompt", "Copy for Claude", "Upload Claude", "Copy CV Prompt for Claude",
+        "Paste this into Claude", "hand it to Claude", "Hand it to Claude", "requirements.json",
+        "cv_context.json", "buildExtractionPrompt", "buildCvPrompt", "Upload .json", "Validate & Match",
+    ]
+    for name, text in _all_frontend_source().items():
+        assert "claude" not in text.lower(), f"{name} mentions Claude -- no manual hand-off may remain"
+        for phrase in forbidden:
+            assert phrase not in text, f"{name} still contains {phrase!r}"
+        assert "navigator.clipboard" not in text or name == "pages/CvPreview.tsx", (
+            f"{name}: clipboard use is only for copying the finished CV, never a prompt"
+        )
 
 
-def test_requirements_upload_screen_never_reruns_extraction() -> None:
-    source = (FRONTEND_SRC / "pages" / "RequirementsUpload.tsx").read_text(encoding="utf-8")
-    assert "buildExtractionPrompt" not in source, "Screen 2 must never call requirement extraction again"
-    assert "analyzeJob" not in source, "Screen 2 must never call the raw-JD extraction endpoint"
-    assert "analyzeRequirements" in source, "Screen 2 must validate+match via the already-extracted-requirements endpoint"
+def test_obsolete_manual_handoff_code_is_removed_not_left_dead() -> None:
+    for gone in ("prompts.ts", "pages/RequirementsUpload.tsx", "pages/CvContext.tsx"):
+        assert not (FRONTEND_SRC / gone).exists(), f"{gone} is an unused manual-hand-off path and must be deleted"
+    client = _source("api", "client.ts")
+    assert "analyzeRequirements" not in client, "the requirements-upload call is no longer part of the UI"
 
 
-def test_cv_prompt_embeds_the_real_cv_context_json() -> None:
-    source = (FRONTEND_SRC / "prompts.ts").read_text(encoding="utf-8")
-    cv_prompt_body = _function_body(source, "buildCvPrompt")
-    assert "JSON.stringify(cvContext" in cv_prompt_body, (
-        "the CV-writing prompt must embed the actual cv_context JSON, not a placeholder"
-    )
+def test_navigation_is_job_match_cv_and_the_graph_explorer_remains() -> None:
+    app = _source("App.tsx")
+    for label in ('"CareerGraph"', '"1 Job"', '"2 Match"', '"3 CV"'):
+        assert f"label={label}" in app, f"nav label {label} missing"
+    for route in ('path="/"', 'path="/new-cv"', 'path="/match-review"', 'path="/cv"'):
+        assert route in app
+    for gone in ("/requirements", "/cv-context", "/cv-preview", 'label="Debug"', '"2 Claude"', '"4 Claude"'):
+        assert gone not in app, f"{gone} belongs to the old manual flow"
+    steps = _source("components", "StepIndicator.tsx")
+    assert '"Job"' in steps and '"Match"' in steps and '"CV"' in steps and "Claude" not in steps
+    assert 'label: "Neo4j"' not in steps
 
-    extraction_prompt_body = _function_body(source, "buildExtractionPrompt")
-    assert "${jobDescription}" in extraction_prompt_body, (
-        "the extraction prompt must append the actual job description text"
-    )
+
+def test_job_page_analyzes_server_side_with_progress_and_duplicate_protection() -> None:
+    source = _source("pages", "NewCv.tsx")
+    assert "Analyze job" in source
+    handler = _function_body(source, "handleAnalyze")
+    assert "api.analyzeJob" in handler
+    assert "inFlight.current" in handler, "a ref guard must stop duplicate submissions"
+    assert "disabled={analyzing" in source, "the button must be disabled while the request runs"
+    assert "<Progress" in source and "ErrorNotice" in source
+    assert "describeApiError" in handler, "errors are shown through the human-readable formatter"
 
 
-def test_cv_context_screen_never_routes_through_cv_evidence() -> None:
-    source = (FRONTEND_SRC / "pages" / "CvContext.tsx").read_text(encoding="utf-8")
-    assert "cv_evidence" not in source.lower()
-    match_review = (FRONTEND_SRC / "pages" / "MatchReview.tsx").read_text(encoding="utf-8")
-    assert "cv_evidence" not in match_review.lower()
+def test_match_page_keeps_review_and_generates_the_cv_from_the_server_side_analysis() -> None:
+    source = _source("pages", "MatchReview.tsx")
+    for section in ('title: "Matched"', 'title: "Transferable"', 'title: "Gaps"'):
+        assert section in source, "the match-review stage must be preserved"
+    assert "Generate evidence-backed CV" in source
+    handler = _function_body(source, "handleGenerate")
+    assert "api.generateCv(analysis.analysisId" in handler, "only the analysisId is sent, never evidence"
+    assert "inFlight.current" in handler
+    assert "cvContext" not in handler
+
+
+def test_cv_generation_request_never_carries_evidence_from_the_browser() -> None:
+    client = _source("api", "client.ts")
+    generate = client[client.index("generateCv:"):]
+    assert "analysisId" in generate and "cvContext" not in generate.split("};")[0]
+    cv_page = _source("pages", "CvPreview.tsx")
+    assert "api.generateCv(analysis.analysisId" in cv_page and "JSON.stringify(cvContext" not in cv_page
+
+
+def test_fallback_output_is_labelled_and_provider_details_are_collapsed() -> None:
+    details = _source("components", "TechnicalDetails.tsx")
+    assert "Development fallback" in details and "<details" in details and "Technical details" in details
+    for page in ("NewCv.tsx", "MatchReview.tsx", "CvPreview.tsx"):
+        assert "FallbackBanner" in _source("pages", page), f"{page} must label dev-fallback output"
+    # Provider / model only ever render inside the collapsed technical-details component.
+    for page in ("NewCv.tsx", "MatchReview.tsx", "CvPreview.tsx"):
+        text = _source("pages", page)
+        assert ".model" not in text and "extractionModel" not in text and "writingModel" not in text, page
+
+
+def test_provenance_is_inspectable_and_never_shows_internal_ids() -> None:
+    panel = _source("components", "ProvenancePanel.tsx")
+    assert "<details" in panel and "Transferable" in panel and "does <strong>not</strong>" in panel
+    assert "evidenceIds" not in panel and "evidenceId" not in panel
+
+
+def test_no_key_prompt_or_provider_error_object_exists_in_frontend_code() -> None:
+    for name, text in _all_frontend_source().items():
+        for needle in ("GROQ", "gsk_", "api.groq.com", "system prompt", "You are the ", "Authorization"):
+            assert needle not in text, f"{name} contains {needle!r}"
+        assert "dangerouslySetInnerHTML" not in text
+    client = _source("api", "client.ts")
+    assert "JSON.stringify(err" not in client, "provider/error objects are never dumped into the UI"
 
 
 def test_cv_evidence_kept_as_optional_layer_not_deleted() -> None:
     assert (ROOT / "pipeline" / "cv_evidence.py").exists()
     assert (ROOT / "tests" / "test_cv_evidence.py").exists()
-    # Not wired into the primary frontend flow's API client.
-    client_source = (FRONTEND_SRC / "api" / "client.ts").read_text(encoding="utf-8")
-    assert "cv_evidence" not in client_source.lower()
+    # Not wired into the frontend flow's API client.
+    assert "cv_evidence" not in _source("api", "client.ts").lower()
 
 
-def test_deterministic_cv_renderer_kept_but_demoted_to_debug() -> None:
-    """cv_writer.DeterministicCVWriter / backend/routes/cv.py must still exist
-    (not deleted) but the frontend nav must label the page that uses it as a
-    debug/secondary entry, not one of the four primary flow steps."""
+def test_deterministic_writer_and_renderer_still_exist_as_labelled_dev_fallback() -> None:
     assert (ROOT / "pipeline" / "cv_writer.py").exists()
     assert (ROOT / "backend" / "routes" / "cv.py").exists()
-    app_source = (FRONTEND_SRC / "App.tsx").read_text(encoding="utf-8")
-    assert 'label="Debug"' in app_source
-    for step_label in ('"1 Job"', '"2 Claude"', '"3 Neo4j"', '"4 Claude"'):
-        assert step_label in app_source, f"primary flow step {step_label} missing from nav"
+    assert (ROOT / "backend" / "cv_markdown.py").exists()
 
 
 if __name__ == "__main__":

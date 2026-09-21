@@ -16,8 +16,15 @@ since the graph is allowed to grow over time and these tests must not need
 updating every time it does.
 """
 import ast
+import os
 import re
 from pathlib import Path
+
+# These tests exercise the real graph, not Groq: select the explicit development fallbacks
+# (cached/heuristic extraction, rule-based CV writer) BEFORE the app reads its LLM settings, so
+# they need neither a GROQ_API_KEY nor network access to Groq. The Groq path is covered by the
+# offline suite in tests/offline/ (mocked, no key).
+os.environ["LLM_PROVIDER"] = "dev"
 
 from fastapi.testclient import TestClient
 
@@ -87,9 +94,13 @@ def test_analyze_response_shape() -> None:
     assert resp.status_code == 200
     data = resp.json()
 
-    assert data["extractionMode"] in ("cached_manual", "heuristic_keyword")
-    assert isinstance(data["extractionNote"], str) and data["extractionNote"]
-    assert data["requirementCount"] > 0
+    assert isinstance(data["analysisId"], str) and data["analysisId"]
+    assert "requirementsPath" not in data  # no shared output/requirements.json any more
+    extraction = data["extraction"]
+    assert extraction["mode"] in ("cached_manual", "heuristic_keyword")
+    assert extraction["provider"] == "dev" and extraction["devFallback"] is True
+    assert isinstance(extraction["note"], str) and extraction["note"]
+    assert data["requirementCount"] > 0 and extraction["requirementCount"] == data["requirementCount"]
 
     cv = data["cvContext"]
     for key in ("requirements", "matchedRequirements", "partialRequirements", "gaps", "evidenceStories", "skills", "cvGuidance"):
@@ -133,13 +144,16 @@ def test_literal_gap_vs_transferable_evidence_separation() -> None:
 
 def test_cv_generate_is_grounded_in_evidence_stories() -> None:
     analyze_resp = client.post("/api/jobs/analyze", json={"jobDescription": JOBS_TXT})
-    cv_context = analyze_resp.json()["cvContext"]
+    analysis_id = analyze_resp.json()["analysisId"]
 
-    resp = client.post("/api/cv/generate", json={"cvContext": cv_context, "template": "modern"})
+    # The CVContext is looked up server-side by analysisId -- the browser never supplies evidence.
+    resp = client.post("/api/cv/generate", json={"analysisId": analysis_id, "template": "modern"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["template"] == "modern"
     assert isinstance(data["markdown"], str) and data["markdown"].startswith("#")
+    assert data["generation"]["mode"] == "deterministic_fallback" and data["generation"]["devFallback"] is True
+    assert data["generation"]["provenanceValidated"] is True
 
     # cv_writer.py deliberately selects/merges/suppresses evidenceStories rather
     # than dumping every one verbatim as its own section (see cv_writer.py) -- so
@@ -154,6 +168,14 @@ def test_cv_generate_is_grounded_in_evidence_stories() -> None:
         assert label in data["markdown"]
         for bullet in entry["bullets"]:
             assert bullet["evidenceIds"], f"bullet has no provenance: {bullet['text']!r}"
+    assert data["provenance"], "every rendered bullet must expose its resolved provenance"
+
+
+def test_cv_generate_rejects_an_unknown_analysis_and_a_browser_supplied_context() -> None:
+    missing = client.post("/api/cv/generate", json={"analysisId": "does-not-exist"})
+    assert missing.status_code == 404
+    forged = client.post("/api/cv/generate", json={"cvContext": {}})
+    assert forged.status_code == 422
 
 
 _WRITE_CLAUSE_RE = re.compile(r"\b(MERGE|CREATE|DELETE|SET|REMOVE)\b", re.IGNORECASE)

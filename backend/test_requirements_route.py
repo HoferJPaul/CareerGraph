@@ -1,10 +1,10 @@
-"""Tests for the primary presentation flow's second-half endpoint:
-/api/requirements/analyze (routes/requirements.py).
+"""Tests for the dev/advanced second-half endpoint: /api/requirements/analyze
+(routes/requirements.py).
 
 This route must NEVER perform requirement extraction -- these tests lock in the
-boundary between "already-extracted requirements" (uploaded/pasted from Claude)
-and the raw-JD /api/jobs/analyze endpoint (routes/jobs.py), which stays an
-optional/dev-only single-shot flow, not the primary path.
+boundary between "already-extracted requirements" (a caller-supplied RequirementList,
+validated by the same schema LLM extraction output passes through) and the raw-JD
+/api/jobs/analyze endpoint (routes/jobs.py), which is the application's own flow.
 
 Run from within backend/:
     python test_requirements_route.py
@@ -27,6 +27,7 @@ def test_valid_requirements_are_validated_and_matched() -> None:
     resp = client.post("/api/requirements/analyze", json=REQUIREMENTS_JSON)
     assert resp.status_code == 200
     data = resp.json()
+    assert data["analysisId"], "the CVContext is stored server-side under an analysisId"
     assert data["requirementCount"] == len(REQUIREMENTS_JSON["requirements"])
     cv = data["cvContext"]
     assert len(cv["matchedRequirements"]) > 0, "matching must actually run from the uploaded requirements"
@@ -65,14 +66,14 @@ def test_empty_requirements_list_is_schema_valid_but_matches_nothing() -> None:
 
 
 def test_capability_expansion_runs_after_upload() -> None:
-    """relatedCapabilities left empty by extraction (Claude, or a human) must still
+    """relatedCapabilities left empty by extraction (the LLM, or a human) must still
     get filled in by this route's own graph-vocabulary capability-expansion stage --
     the exact behavior /api/jobs/analyze gets from the same shared
     pipeline.build_cv_context. "backend development" shares real, non-generic
     vocabulary with the existing "backend engineering" Skill node, so the
     mechanical graph-vocabulary pass (capability_suggest.suggest_from_context) must
     find it on its own -- unlike a semantic bridge (e.g. sentry -> observability),
-    which requires world knowledge only the extraction step (Claude) supplies."""
+    which requires world knowledge only the extraction step (the LLM) supplies."""
     payload = {
         "requirements": [
             {
