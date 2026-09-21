@@ -1,22 +1,98 @@
-"""Orchestration only. Evidence retrieval already happened (routes/jobs.py ->
-tailor_cv.py); this route runs the two remaining stages in order: CV *writing*
-(cv_writer.DeterministicCVWriter turns the CVContext into a StructuredCV -- all
-selection/merging/bucketing decisions happen here) then CV *rendering*
-(cv_markdown.render lays the StructuredCV out as Markdown, with zero
-selection decisions of its own). Neither stage is reimplemented in this file.
-"""
-from fastapi import APIRouter
+"""Orchestration only. Evidence retrieval already happened (routes/jobs.py -> pipeline.py);
+this route runs the remaining stages, in order:
 
-from api_schemas import CvGenerateRequest, CvGenerateResponse
-from cv_markdown import render
-from cv_writer import DeterministicCVWriter
+    AnalysisStore lookup      the CVContext THIS SERVER built -- never one sent by the browser
+      -> writer.generate()    GroqCVWriter (production) or the labelled deterministic fallback
+      -> provenance validation  reject, never repair (llm/provenance.py)
+      -> cv_markdown.render()   deterministic layout of the validated StructuredCV
+
+All of that sequencing lives in cv_generation.build_cv_document, so the renderer can only ever
+receive a StructuredCV that passed validation. Neither stage is reimplemented in this file.
+"""
+from fastapi import APIRouter, Depends, HTTPException
+
+from analysis_store import AnalysisStore, get_analysis_store
+from api_schemas import (
+    BulletProvenance,
+    CvGenerateRequest,
+    CvGenerateResponse,
+    EvidenceRef,
+    GenerationInfo,
+    TokenUsageInfo,
+)
+from cv_generation import CvDocument, build_cv_document
+from llm.evidence_registry import EvidenceItem
+from llm.factory import LLMServices, get_llm_services
+from llm.provenance import BulletTrace
 
 router = APIRouter(prefix="/api/cv", tags=["cv"])
-_writer = DeterministicCVWriter()
+
+
+def _evidence_ref(item: EvidenceItem) -> EvidenceRef:
+    owner = item.owner.removeprefix("story:") if item.owner else None
+    label = (owner or item.text) if item.kind == "story" else item.text
+    return EvidenceRef(
+        label=label,
+        kind=item.kind,
+        sourceType=item.source_type,
+        owner=owner,
+        transferableFor=item.transferable_for,
+        relatedGaps=list(item.gaps),
+    )
+
+
+def _provenance(trace: BulletTrace) -> BulletProvenance:
+    return BulletProvenance(
+        section=trace.section,
+        entry=trace.entry,
+        text=trace.text,
+        evidence=[_evidence_ref(item) for item in trace.evidence],
+    )
+
+
+def _generation_info(document: CvDocument) -> GenerationInfo:
+    out = document.output
+    usage = out.usage
+    return GenerationInfo(
+        provider=out.provider,
+        model=out.model,
+        mode=out.mode,
+        devFallback=out.provider != "groq",
+        tokenUsage=(
+            TokenUsageInfo(
+                promptTokens=usage.prompt_tokens,
+                completionTokens=usage.completion_tokens,
+                totalTokens=usage.total_tokens,
+            )
+            if usage
+            else None
+        ),
+        retried=out.retried,
+        attempts=out.attempts,
+    )
 
 
 @router.post("/generate", response_model=CvGenerateResponse)
-def generate_cv(payload: CvGenerateRequest) -> CvGenerateResponse:
-    structured_cv = _writer.write(payload.cvContext)
-    markdown = render(structured_cv, payload.template)
-    return CvGenerateResponse(markdown=markdown, template=payload.template, structuredCv=structured_cv)
+def generate_cv(
+    payload: CvGenerateRequest,
+    services: LLMServices = Depends(get_llm_services),
+    store: AnalysisStore = Depends(get_analysis_store),
+) -> CvGenerateResponse:
+    record = store.get(payload.analysisId)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "analysis_not_found",
+                "message": "This analysis has expired or does not exist. Analyze the job description again.",
+                "retryable": False,
+            },
+        )
+    document = build_cv_document(services.cv_writer, record.cv_context, payload.template)
+    return CvGenerateResponse(
+        markdown=document.markdown,
+        template=payload.template,
+        structuredCv=document.output.structured_cv,
+        generation=_generation_info(document),
+        provenance=[_provenance(t) for t in document.report.bullets],
+    )

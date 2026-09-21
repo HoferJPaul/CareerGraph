@@ -8,8 +8,9 @@ only makes them importable from backend/ and provides one shared, read-only
 driver for the API routes to reuse.
 """
 import sys
+import threading
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Optional
 
 BACKEND_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BACKEND_DIR.parent
@@ -20,9 +21,21 @@ if str(PIPELINE_DIR) not in sys.path:
 from neo4j import Driver, GraphDatabase  # noqa: E402
 from setup_schema import load_env  # noqa: E402
 
-_env = load_env(ROOT_DIR / ".env")
-_driver: Driver = GraphDatabase.driver(_env["NEO4J_URI"], auth=(_env["NEO4J_USERNAME"], _env["NEO4J_PASSWORD"]))
-_database = _env["NEO4J_DATABASE"]
+# The driver is created on first use, not at import time: importing the API (and running the
+# offline test suite against dependency-overridden routes) must not require Neo4j credentials.
+_driver: Optional[Driver] = None
+_database: Optional[str] = None
+_driver_lock = threading.Lock()
+
+
+def _get_driver() -> Driver:
+    global _driver, _database
+    with _driver_lock:
+        if _driver is None:
+            env = load_env(ROOT_DIR / ".env")
+            _driver = GraphDatabase.driver(env["NEO4J_URI"], auth=(env["NEO4J_USERNAME"], env["NEO4J_PASSWORD"]))
+            _database = env["NEO4J_DATABASE"]
+        return _driver
 
 
 def get_session() -> Generator:
@@ -33,9 +46,12 @@ def get_session() -> Generator:
     this is the one place a write-mode session could ever be introduced, and
     it deliberately never is.
     """
-    with _driver.session(database=_database, default_access_mode="READ") as session:
+    driver = _get_driver()
+    with driver.session(database=_database, default_access_mode="READ") as session:
         yield session
 
 
 def shutdown_driver() -> None:
-    _driver.close()
+    with _driver_lock:
+        if _driver is not None:
+            _driver.close()

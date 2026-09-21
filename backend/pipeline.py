@@ -4,13 +4,15 @@ never performs requirement extraction itself.
 
 Used by both:
   - routes/jobs.py's /api/jobs/analyze (raw JD -> LLMProvider.extract_requirements()
-    -> this stage) -- the optional/dev single-shot flow.
-  - routes/requirements.py's /api/requirements/analyze (uploaded/pasted Claude
-    requirements.json -> this stage directly) -- the primary presentation flow.
+    (Groq, validated into a RequirementList) -> this stage) -- the application's flow.
+  - routes/requirements.py's /api/requirements/analyze (a caller-supplied,
+    schema-validated RequirementList -> this stage directly) -- the dev/advanced
+    endpoint.
 
 Factored out so the two entry points can never drift apart. No matching/tailoring
 logic is reimplemented here -- every step calls straight into the existing
-pipeline/ modules (capability_suggest, matching, match_job, tailor_cv).
+pipeline/ modules (capability_suggest, matching, match_job, tailor_cv). This stage is
+deterministic and LLM-free: the graph proves.
 """
 from pathlib import Path
 
@@ -49,8 +51,9 @@ def build_cv_context(requirements: RequirementList, session, root: Path) -> CVCo
     # mostly finds nothing for genuine tool-name gaps -- correct and honest, since
     # tool names generically share no vocabulary with their capability category.
     # The semantic bridge (e.g. "cloudwatch" -> "observability", no shared
-    # vocabulary at all) is what Claude's own extraction (or the cached/manual
-    # requirements.json) already carries -- it is never invented here.
+    # vocabulary at all) is what the LLM extraction step (or a curated requirements
+    # file) already carries, verified against the graph vocabulary -- it is never
+    # invented here.
     for req in requirements.requirements:
         if req.relatedCapabilities:
             continue

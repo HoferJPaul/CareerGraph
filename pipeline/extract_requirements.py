@@ -1,9 +1,9 @@
-"""Explicit, mandatory checkpoint for the "Claude Code / manual mode" extraction stage.
+"""Explicit checkpoint for the MANUAL (offline / development) extraction workflow.
 
-This project has no LLM API wired in (see backend/llm_provider.py), so requirement
-extraction from a job description is an interactive step: Claude Code (or a human)
-reads the job description and hand-authors data/requirements.json against the
-RequirementList schema in requirement_schema.py.
+The web app extracts requirements automatically with Groq (backend/llm/, LLM_PROVIDER=groq).
+This CLI belongs to the older manual workflow, kept for offline use and development: there,
+Claude Code (or a human) reads the job description and hand-authors data/requirements.json
+against the RequirementList schema in requirement_schema.py.
 
 This script does not call any LLM API and does not attempt extraction itself. It only
 answers one question -- "is data/requirements.json valid and does it correspond to this
